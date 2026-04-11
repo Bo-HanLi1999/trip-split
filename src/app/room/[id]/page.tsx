@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
-import { Plus, UserPlus, Receipt, ArrowRightLeft, Loader2, Copy, Trash2, Check } from 'lucide-react';
+import { Plus, UserPlus, Receipt, ArrowRightLeft, Loader2, Copy, Trash2, Check, X } from 'lucide-react';
 
 interface Member {
   id: string;
@@ -116,6 +116,32 @@ export default function RoomPage() {
       alert('加入成員時發生錯誤');
     } finally {
       setJoining(false);
+    }
+  };
+
+  const handleDeleteMember = async (memberId: string, memberName: string) => {
+    // 檢查該成員是否有相關花費紀錄
+    const hasExpense = expenses.some(exp => 
+      exp.paid_by === memberId || exp.split_among.includes(memberId)
+    );
+
+    if (hasExpense) {
+      alert(`無法刪除 ${memberName}，因為他已有相關的花費紀錄。請先刪除他的紀錄再嘗試。`);
+      return;
+    }
+
+    if (!confirm(`確定要將 ${memberName} 從房間中移除嗎？`)) return;
+
+    try {
+      const { error } = await supabase
+        .from('members')
+        .delete()
+        .eq('id', memberId);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      console.error('Error deleting member:', err);
+      alert('刪除成員失敗');
     }
   };
 
@@ -267,8 +293,14 @@ export default function RoomPage() {
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
               {members.map(m => (
-                <div key={m.id} className="bg-white px-3 py-1.5 rounded-full text-sm font-semibold border border-slate-200 shadow-sm">
-                  {m.name}
+                <div key={m.id} className="bg-white pl-3 pr-1 py-1 rounded-full text-sm font-semibold border border-slate-200 shadow-sm flex items-center gap-1">
+                  <span>{m.name}</span>
+                  <button 
+                    onClick={() => handleDeleteMember(m.id, m.name)}
+                    className="p-1 hover:text-rose-500 text-slate-400 transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
                 </div>
               ))}
               {members.length === 0 && <p className="text-slate-400 text-sm">尚未有成員加入</p>}
