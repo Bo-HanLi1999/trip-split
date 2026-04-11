@@ -467,15 +467,15 @@ export default function RoomPage() {
                       分攤: {exp.split_among.map(id => members.find(m => m.id === id)?.name).join(', ')}
                     </p>
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 sm:gap-4">
                     <div className="text-lg font-black text-slate-900">${exp.amount}</div>
                     <Button 
                       variant="ghost" 
-                      size="icon-xs" 
-                      className="text-slate-300 hover:text-rose-500 hover:bg-rose-50 opacity-0 group-hover:opacity-100 transition-all"
+                      size="icon-sm" 
+                      className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-all rounded-full h-9 w-9"
                       onClick={() => handleDeleteExpense(exp.id)}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-5 w-5" />
                     </Button>
                   </div>
                 </CardContent>
