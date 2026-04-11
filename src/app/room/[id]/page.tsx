@@ -369,7 +369,7 @@ export default function RoomPage() {
                   </div>
                   <div className="space-y-2">
                     <Label className="text-slate-600 ml-1">誰付的錢？</Label>
-                    <Select onValueChange={setPayerId} value={payerId}>
+                    <Select onValueChange={(val) => setPayerId(val || '')} value={payerId}>
                       <SelectTrigger className="h-12 bg-slate-50 border-none rounded-xl">
                         <SelectValue placeholder="選擇付款人">
                           {members.find(m => m.id === payerId)?.name || "選擇付款人"}
