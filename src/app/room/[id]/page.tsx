@@ -8,10 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
-import { Plus, UserPlus, Receipt, ArrowRightLeft, Loader2, Copy } from 'lucide-react';
+import { Plus, UserPlus, Receipt, ArrowRightLeft, Loader2, Copy, Trash2, Check } from 'lucide-react';
 
 interface Member {
   id: string;
@@ -43,9 +42,15 @@ export default function RoomPage() {
   const [selectedSplitters, setSelectedSplitters] = useState<string[]>([]);
   const [isAddingExpense, setIsAddingExpense] = useState(false);
 
+  // 當打開新增花費視窗時，自動預設全選所有成員
+  useEffect(() => {
+    if (isAddingExpense && members.length > 0) {
+      setSelectedSplitters(members.map(m => m.id));
+    }
+  }, [isAddingExpense, members]);
+
   const fetchData = useCallback(async () => {
     try {
-      // Fetch Room
       const { data: roomData, error: roomError } = await supabase
         .from('rooms')
         .select('name')
@@ -54,7 +59,6 @@ export default function RoomPage() {
       if (roomError) throw roomError;
       setRoomName(roomData.name);
 
-      // Fetch Members
       const { data: membersData, error: membersError } = await supabase
         .from('members')
         .select('*')
@@ -63,7 +67,6 @@ export default function RoomPage() {
       if (membersError) throw membersError;
       setMembers(membersData || []);
 
-      // Fetch Expenses
       const { data: expensesData, error: expensesError } = await supabase
         .from('expenses')
         .select('*')
@@ -81,7 +84,6 @@ export default function RoomPage() {
   useEffect(() => {
     fetchData();
 
-    // Set up real-time subscriptions
     const membersChannel = supabase
       .channel('members-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'members', filter: `room_id=eq.${roomId}` }, () => fetchData())
@@ -147,52 +149,94 @@ export default function RoomPage() {
     }
   };
 
+  const handleDeleteExpense = async (id: string) => {
+    if (!confirm('確定要刪除這筆花費嗎？')) return;
+    try {
+      const { error } = await supabase
+        .from('expenses')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      console.error('Error deleting:', err);
+      alert('刪除失敗');
+    }
+  };
+
+  const handleQuickSettle = async (fromId: string, toId: string, fromName: string, toName: string, amount: number) => {
+    try {
+      const { error } = await supabase
+        .from('expenses')
+        .insert([{
+          room_id: roomId,
+          description: `[轉帳] ${fromName} 給 ${toName}`,
+          amount: amount,
+          paid_by: fromId,
+          split_among: [toId]
+        }]);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      console.error('Error settling:', err);
+      alert('結清操作失敗');
+    }
+  };
+
   const copyUrl = () => {
     navigator.clipboard.writeText(window.location.href);
     alert('已複製網址，分享給朋友吧！');
   };
 
-  // Algorithm: Calculate Settlements
-  const settlements = useMemo(() => {
+  const { individualBalances, transfers } = useMemo(() => {
     const balance: Record<string, number> = {};
     members.forEach(m => balance[m.id] = 0);
 
     expenses.forEach(exp => {
-      const perPerson = exp.amount / exp.split_among.length;
-      balance[exp.paid_by] += exp.amount;
+      const perPerson = Math.ceil(exp.amount / exp.split_among.length);
+      const adjustedTotal = perPerson * exp.split_among.length;
+      balance[exp.paid_by] += adjustedTotal;
       exp.split_among.forEach(mId => {
         balance[mId] -= perPerson;
       });
     });
 
+    const individualBalances = members.map(m => ({
+      id: m.id,
+      name: m.name,
+      net: balance[m.id] || 0
+    }));
+
     const creditors = Object.entries(balance)
-      .filter(([_, val]) => val > 0.01)
+      .filter(([_, val]) => val > 0.5)
       .sort((a, b) => b[1] - a[1]);
     const debtors = Object.entries(balance)
-      .filter(([_, val]) => val < -0.01)
+      .filter(([_, val]) => val < -0.5)
       .sort((a, b) => a[1] - b[1]);
 
-    const result: { from: string, to: string, amount: number }[] = [];
-    const debtorsCopy = [...debtors];
-    const creditorsCopy = [...creditors];
+    const transfers: { fromId: string, toId: string, from: string, to: string, amount: number }[] = [];
+    const debtorsCopy = debtors.map(d => [d[0], d[1]] as [string, number]);
+    const creditorsCopy = creditors.map(c => [c[0], c[1]] as [string, number]);
 
     let d = 0, c = 0;
     while (d < debtorsCopy.length && c < creditorsCopy.length) {
       const amount = Math.min(Math.abs(debtorsCopy[d][1]), creditorsCopy[c][1]);
-      result.push({
+      transfers.push({
+        fromId: debtorsCopy[d][0],
+        toId: creditorsCopy[c][0],
         from: members.find(m => m.id === debtorsCopy[d][0])?.name || '未知',
         to: members.find(m => m.id === creditorsCopy[c][0])?.name || '未知',
-        amount: Math.round(amount * 100) / 100
+        amount: Math.round(amount)
       });
 
       debtorsCopy[d][1] += amount;
       creditorsCopy[c][1] -= amount;
 
-      if (Math.abs(debtorsCopy[d][1]) < 0.01) d++;
-      if (Math.abs(creditorsCopy[c][1]) < 0.01) c++;
+      if (Math.abs(debtorsCopy[d][1]) < 0.5) d++;
+      if (Math.abs(creditorsCopy[c][1]) < 0.5) c++;
     }
 
-    return result;
+    return { individualBalances, transfers };
   }, [members, expenses]);
 
   if (loading) {
@@ -205,27 +249,25 @@ export default function RoomPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10 px-4 py-3 flex items-center justify-between">
+    <div className="min-h-screen bg-slate-50 pb-20 text-slate-900">
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-10 px-4 py-3 flex items-center justify-between shadow-sm">
         <h1 className="text-xl font-bold truncate pr-4">{roomName}</h1>
         <Button variant="outline" size="sm" onClick={copyUrl} className="flex-shrink-0">
-          <Copy className="h-4 w-4 mr-1" /> 分享網址
+          <Copy className="h-4 w-4 mr-1" /> 分享
         </Button>
       </div>
 
       <div className="max-w-md mx-auto p-4 space-y-6">
-        {/* Members Section */}
-        <Card>
+        <Card className="border-none shadow-sm">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center">
+            <CardTitle className="text-lg flex items-center text-slate-700">
               <UserPlus className="h-5 w-5 mr-2" /> 成員
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
               {members.map(m => (
-                <div key={m.id} className="bg-slate-100 px-3 py-1 rounded-full text-sm font-medium border border-slate-200">
+                <div key={m.id} className="bg-white px-3 py-1.5 rounded-full text-sm font-semibold border border-slate-200 shadow-sm">
                   {m.name}
                 </div>
               ))}
@@ -237,72 +279,101 @@ export default function RoomPage() {
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 disabled={joining}
+                className="bg-white h-10"
               />
-              <Button type="submit" disabled={joining || !newName.trim()}>
+              <Button type="submit" disabled={joining || !newName.trim()} className="h-10 px-6">
                 加入
               </Button>
             </form>
           </CardContent>
         </Card>
 
-        {/* Settlement Section */}
-        {settlements.length > 0 && (
-          <Card className="bg-blue-50 border-blue-200">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg flex items-center text-blue-900">
+        {individualBalances.length > 0 && (expenses.length > 0) && (
+          <Card className="border-blue-100 shadow-md overflow-hidden bg-white">
+            <CardHeader className="bg-blue-600 pb-4 border-b border-blue-100">
+              <CardTitle className="text-lg flex items-center text-white">
                 <ArrowRightLeft className="h-5 w-5 mr-2" /> 結算清單
               </CardTitle>
-              <CardDescription className="text-blue-700">自動計算最少轉帳次數</CardDescription>
+              <CardDescription className="text-blue-100">已自動取整數，付錢的人少付一點</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {settlements.map((s, idx) => (
-                  <div key={idx} className="flex items-center justify-between bg-white/60 p-3 rounded-lg border border-blue-100">
-                    <div className="font-medium text-slate-800">{s.from}</div>
-                    <div className="flex flex-col items-center flex-1 px-4">
-                      <div className="text-xs text-blue-600 font-bold">${s.amount}</div>
-                      <div className="w-full h-px bg-blue-300 relative">
-                        <div className="absolute right-0 -top-1 border-t-4 border-l-4 border-transparent border-l-blue-300"></div>
-                      </div>
-                    </div>
-                    <div className="font-medium text-slate-800">{s.to}</div>
+            <CardContent className="p-0">
+              <div className="divide-y divide-slate-50">
+                {individualBalances.map((b, idx) => (
+                  <div key={idx} className="flex items-center justify-between px-4 py-3.5">
+                    <span className="font-bold text-slate-700">{b.name}</span>
+                    {b.net > 0 ? (
+                      <span className="text-emerald-600 font-extrabold text-base">應收 ${b.net}</span>
+                    ) : b.net < 0 ? (
+                      <span className="text-rose-500 font-extrabold text-base">應付 ${Math.abs(b.net)}</span>
+                    ) : (
+                      <span className="text-slate-400 font-medium">已結清</span>
+                    )}
                   </div>
                 ))}
               </div>
+
+              {transfers.length > 0 && (
+                <div className="bg-slate-50 p-4 border-t border-slate-100">
+                  <h4 className="text-xs font-black text-slate-400 mb-4 uppercase tracking-widest">建議轉帳順序</h4>
+                  <div className="space-y-3">
+                    {transfers.map((s, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <div className="flex-1 flex items-center justify-between bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-sm">
+                          <span className="font-bold text-slate-800">{s.from}</span>
+                          <div className="flex flex-col items-center flex-1 px-4">
+                            <span className="text-[11px] font-black text-blue-600 mb-1 tracking-tighter">${s.amount}</span>
+                            <div className="w-full h-0.5 bg-blue-100 relative rounded-full">
+                              <div className="absolute right-0 -top-0.5 border-t-2 border-l-2 border-transparent border-l-blue-400"></div>
+                            </div>
+                          </div>
+                          <span className="font-bold text-slate-800">{s.to}</span>
+                        </div>
+                        <Button 
+                          size="icon-sm" 
+                          variant="outline" 
+                          className="rounded-xl h-12 w-12 flex-shrink-0 bg-white hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-all border-slate-200"
+                          onClick={() => handleQuickSettle(s.fromId, s.toId, s.from, s.to, s.amount)}
+                        >
+                          <Check className="h-5 w-5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
 
-        {/* Expenses List */}
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold flex items-center">
+            <h2 className="text-lg font-bold flex items-center text-slate-800">
               <Receipt className="h-5 w-5 mr-2" /> 花費紀錄
             </h2>
             <Dialog open={isAddingExpense} onOpenChange={setIsAddingExpense}>
-              <DialogTrigger asChild>
-                <Button size="sm" className="rounded-full">
-                  <Plus className="h-4 w-4 mr-1" /> 新增花費
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-[90vw] rounded-2xl">
+              <DialogTrigger render={<Button size="sm" className="rounded-full h-9 px-4 shadow-sm">
+                <Plus className="h-4 w-4 mr-1" /> 新增花費
+              </Button>} />
+              <DialogContent className="max-w-[90vw] rounded-3xl">
                 <DialogHeader>
-                  <DialogTitle>新增花費</DialogTitle>
+                  <DialogTitle className="text-xl">新增花費</DialogTitle>
                 </DialogHeader>
-                <form onSubmit={handleAddExpense} className="space-y-4 py-4">
+                <form onSubmit={handleAddExpense} className="space-y-5 py-4">
                   <div className="space-y-2">
-                    <Label>花費說明</Label>
-                    <Input placeholder="例如：晚餐、租車..." value={expenseDesc} onChange={e => setExpenseDesc(e.target.value)} />
+                    <Label className="text-slate-600 ml-1">花費說明</Label>
+                    <Input placeholder="例如：晚餐、租車..." value={expenseDesc} onChange={e => setExpenseDesc(e.target.value)} className="h-12 bg-slate-50 border-none rounded-xl" />
                   </div>
                   <div className="space-y-2">
-                    <Label>金額 ($)</Label>
-                    <Input type="number" placeholder="0.00" value={expenseAmount} onChange={e => setExpenseAmount(e.target.value)} />
+                    <Label className="text-slate-600 ml-1">金額 ($)</Label>
+                    <Input type="number" placeholder="0" value={expenseAmount} onChange={e => setExpenseAmount(e.target.value)} className="h-12 bg-slate-50 border-none rounded-xl text-lg font-bold" />
                   </div>
                   <div className="space-y-2">
-                    <Label>誰付的錢？</Label>
+                    <Label className="text-slate-600 ml-1">誰付的錢？</Label>
                     <Select onValueChange={setPayerId} value={payerId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="選擇付款人" />
+                      <SelectTrigger className="h-12 bg-slate-50 border-none rounded-xl">
+                        <SelectValue placeholder="選擇付款人">
+                          {members.find(m => m.id === payerId)?.name || "選擇付款人"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {members.map(m => (
@@ -312,37 +383,39 @@ export default function RoomPage() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>分攤成員 (預設全選)</Label>
-                    <div className="grid grid-cols-2 gap-2 border rounded-md p-3 max-h-40 overflow-y-auto">
+                    <div className="flex justify-between items-center ml-1">
+                      <Label className="text-slate-600">分攤成員</Label>
+                      <Button 
+                        type="button" 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => setSelectedSplitters(members.map(m => m.id))}
+                        className="text-xs h-6 text-blue-600 hover:bg-blue-50"
+                      >
+                        全選
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 p-1 max-h-40 overflow-y-auto">
                       {members.map(m => (
-                        <div key={m.id} className="flex items-center space-x-2">
+                        <div key={m.id} className={`flex items-center space-x-2 p-2 rounded-xl border transition-all ${selectedSplitters.includes(m.id) ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-100 text-slate-500'}`} onClick={() => {
+                          if (selectedSplitters.includes(m.id)) {
+                            setSelectedSplitters(selectedSplitters.filter(id => id !== m.id));
+                          } else {
+                            setSelectedSplitters([...selectedSplitters, m.id]);
+                          }
+                        }}>
                           <Checkbox 
                             id={`m-${m.id}`} 
                             checked={selectedSplitters.includes(m.id)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setSelectedSplitters([...selectedSplitters, m.id]);
-                              } else {
-                                setSelectedSplitters(selectedSplitters.filter(id => id !== m.id));
-                              }
-                            }}
+                            className="hidden"
                           />
-                          <label htmlFor={`m-${m.id}`} className="text-sm truncate">{m.name}</label>
+                          <span className="text-sm font-bold truncate">{m.name}</span>
                         </div>
                       ))}
                     </div>
-                    <Button 
-                      type="button" 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => setSelectedSplitters(members.map(m => m.id))}
-                      className="text-xs h-8"
-                    >
-                      全選
-                    </Button>
                   </div>
-                  <DialogFooter>
-                    <Button type="submit" className="w-full">送出紀錄</Button>
+                  <DialogFooter className="pt-2">
+                    <Button type="submit" className="w-full h-12 text-lg font-bold rounded-2xl shadow-lg shadow-blue-200">送出紀錄</Button>
                   </DialogFooter>
                 </form>
               </DialogContent>
@@ -351,25 +424,35 @@ export default function RoomPage() {
 
           <div className="space-y-3">
             {expenses.map(exp => (
-              <Card key={exp.id}>
+              <Card key={exp.id} className="border-none shadow-sm overflow-hidden group">
                 <CardContent className="p-4 flex justify-between items-center">
-                  <div>
-                    <h3 className="font-bold">{exp.description}</h3>
-                    <p className="text-xs text-slate-500">
+                  <div className="flex-1">
+                    <h3 className="font-bold text-slate-800">{exp.description}</h3>
+                    <p className="text-[11px] text-slate-500 font-medium">
                       {members.find(m => m.id === exp.paid_by)?.name} 付了 ${exp.amount}
                     </p>
-                    <p className="text-[10px] text-slate-400">
-                      分攤者: {exp.split_among.map(id => members.find(m => m.id === id)?.name).join(', ')}
+                    <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[200px]">
+                      分攤: {exp.split_among.map(id => members.find(m => m.id === id)?.name).join(', ')}
                     </p>
                   </div>
-                  <div className="text-lg font-bold text-slate-900">${exp.amount}</div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-lg font-black text-slate-900">${exp.amount}</div>
+                    <Button 
+                      variant="ghost" 
+                      size="icon-xs" 
+                      className="text-slate-300 hover:text-rose-500 hover:bg-rose-50 opacity-0 group-hover:opacity-100 transition-all"
+                      onClick={() => handleDeleteExpense(exp.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))}
             {expenses.length === 0 && (
-              <div className="text-center py-10 bg-white rounded-xl border border-dashed border-slate-300">
-                <Receipt className="h-10 w-10 text-slate-200 mx-auto mb-2" />
-                <p className="text-slate-400">尚無任何花費紀錄</p>
+              <div className="text-center py-16 bg-white rounded-3xl border-2 border-dashed border-slate-100">
+                <Receipt className="h-12 w-12 text-slate-100 mx-auto mb-3" />
+                <p className="text-slate-400 font-medium">尚無任何花費紀錄</p>
               </div>
             )}
           </div>
