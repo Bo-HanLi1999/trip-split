@@ -380,55 +380,50 @@ export default function RoomPage() {
 
         {individualBalances.length > 0 && (expenses.length > 0) && (
           <Card className="border-blue-100 shadow-md overflow-hidden bg-white">
-            <CardHeader className="bg-blue-600 pb-4 border-b border-blue-100">
-              <CardTitle className="text-lg flex items-center text-white">
-                <ArrowRightLeft className="h-5 w-5 mr-2 shrink-0" /> 結算清單
-              </CardTitle>
-              <CardDescription className="text-blue-100 text-xs leading-relaxed">
-                系統已自動取整數，付錢的人可能會少收/多付幾塊錢。
-              </CardDescription>
-            </CardHeader>
+            <div className="bg-blue-600 p-5 text-white">
+              <h3 className="text-lg font-bold flex items-center mb-1">
+                <ArrowRightLeft className="h-5 w-5 mr-2" /> 結算清單
+              </h3>
+              <p className="text-blue-100 text-xs opacity-90">
+                系統已自動取整數，付錢的人可能會少收/多付幾塊錢
+              </p>
+            </div>
             <CardContent className="p-0">
               <div className="divide-y divide-slate-50">
                 {individualBalances.map((b, idx) => (
                   <div key={idx} className="flex items-center justify-between px-4 py-3.5">
-                    <span className="font-bold text-slate-700 truncate mr-4">{b.name}</span>
-                    <div className="shrink-0">
-                      {b.net > 0 ? (
-                        <span className="text-emerald-600 font-extrabold text-base">應收 ${b.net}</span>
-                      ) : b.net < 0 ? (
-                        <span className="text-rose-500 font-extrabold text-base">應付 ${Math.abs(b.net)}</span>
-                      ) : (
-                        <span className="text-slate-400 font-medium">已結清</span>
-                      )}
-                    </div>
+                    <span className="font-bold text-slate-700">{b.name}</span>
+                    {b.net > 0 ? (
+                      <span className="text-emerald-600 font-extrabold text-base">應收 ${b.net}</span>
+                    ) : b.net < 0 ? (
+                      <span className="text-rose-500 font-extrabold text-base">應付 ${Math.abs(b.net)}</span>
+                    ) : (
+                      <span className="text-slate-400 font-medium">已結清</span>
+                    )}
                   </div>
                 ))}
               </div>
 
               {transfers.length > 0 && (
                 <div className="bg-slate-50 p-4 border-t border-slate-100">
-                  <h4 className="text-[10px] font-black text-slate-400 mb-4 uppercase tracking-[0.2em]">建議轉帳順序</h4>
+                  <h4 className="text-xs font-black text-slate-400 mb-4 uppercase tracking-widest">建議轉帳順序</h4>
                   <div className="space-y-3">
                     {transfers.map((s, idx) => (
                       <div key={idx} className="flex items-center gap-2">
-                        <div className="flex-1 min-w-0 flex items-center justify-between bg-white px-3 py-3 rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                          <span className="font-bold text-slate-800 truncate text-sm flex-1 text-left">{s.from}</span>
-                          
-                          <div className="flex flex-col items-center px-2 min-w-[60px]">
-                            <span className="text-[10px] font-black text-blue-600 mb-0.5">${s.amount}</span>
+                        <div className="flex-1 flex items-center justify-between bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-sm">
+                          <span className="font-bold text-slate-800">{s.from}</span>
+                          <div className="flex flex-col items-center flex-1 px-4">
+                            <span className="text-[11px] font-black text-blue-600 mb-1 tracking-tighter">${s.amount}</span>
                             <div className="w-full h-0.5 bg-blue-100 relative rounded-full">
-                              <div className="absolute right-0 -top-0.5 w-1.5 h-1.5 border-t-2 border-r-2 border-blue-400 transform rotate-45"></div>
+                              <div className="absolute right-0 -top-0.5 border-t-2 border-l-2 border-transparent border-l-blue-400"></div>
                             </div>
                           </div>
-                          
-                          <span className="font-bold text-slate-800 truncate text-sm flex-1 text-right">{s.to}</span>
+                          <span className="font-bold text-slate-800">{s.to}</span>
                         </div>
-                        
                         <Button 
-                          size="icon" 
+                          size="icon-sm" 
                           variant="outline" 
-                          className="rounded-xl h-12 w-12 flex-shrink-0 bg-white hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-all border-slate-200 shadow-sm"
+                          className="rounded-xl h-12 w-12 flex-shrink-0 bg-white hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-all border-slate-200"
                           onClick={() => handleQuickSettle(s.fromId, s.toId, s.from, s.to, s.amount)}
                         >
                           <Check className="h-5 w-5" />
