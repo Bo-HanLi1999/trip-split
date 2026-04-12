@@ -22,7 +22,7 @@ interface Expense {
   description: string;
   amount: number;
   paid_by: string;
-  split_among: string[];
+  split_among: string[] | Record<string, number>;
   created_at: string;
 }
 
@@ -40,12 +40,33 @@ export default function RoomPage() {
   const [expenseAmount, setExpenseAmount] = useState('');
   const [payerId, setPayerId] = useState('');
   const [selectedSplitters, setSelectedSplitters] = useState<string[]>([]);
+  const [isManualSplit, setIsManualSplit] = useState(false);
+  const [individualAmounts, setIndividualAmounts] = useState<Record<string, string>>({});
   const [isAddingExpense, setIsAddingExpense] = useState(false);
+
+  // 當總金額、成員選擇或模式改變時，自動更新各成員金額
+  useEffect(() => {
+    if (!isManualSplit && members.length > 0) {
+      const total = parseFloat(expenseAmount) || 0;
+      const count = selectedSplitters.length;
+      if (count > 0) {
+        const perPerson = Math.ceil(total / count);
+        const newAmounts: Record<string, string> = {};
+        selectedSplitters.forEach(id => {
+          newAmounts[id] = perPerson.toString();
+        });
+        setIndividualAmounts(newAmounts);
+      } else {
+        setIndividualAmounts({});
+      }
+    }
+  }, [expenseAmount, selectedSplitters, isManualSplit, members]);
 
   // 當打開新增花費視窗時，自動預設全選所有成員
   useEffect(() => {
     if (isAddingExpense && members.length > 0) {
       setSelectedSplitters(members.map(m => m.id));
+      setIsManualSplit(false);
     }
   }, [isAddingExpense, members]);
 
@@ -153,6 +174,11 @@ export default function RoomPage() {
     }
 
     try {
+      const splitDetails: Record<string, number> = {};
+      selectedSplitters.forEach(id => {
+        splitDetails[id] = parseFloat(individualAmounts[id]) || 0;
+      });
+
       const { error } = await supabase
         .from('expenses')
         .insert([{
@@ -160,13 +186,15 @@ export default function RoomPage() {
           description: expenseDesc,
           amount: parseFloat(expenseAmount),
           paid_by: payerId,
-          split_among: selectedSplitters
+          split_among: splitDetails
         }]);
       if (error) throw error;
       setExpenseDesc('');
       setExpenseAmount('');
       setPayerId('');
       setSelectedSplitters([]);
+      setIndividualAmounts({});
+      setIsManualSplit(false);
       setIsAddingExpense(false);
       fetchData();
     } catch (err) {
@@ -199,7 +227,7 @@ export default function RoomPage() {
           description: `[轉帳] ${fromName} 給 ${toName}`,
           amount: amount,
           paid_by: fromId,
-          split_among: [toId]
+          split_among: { [toId]: amount }
         }]);
       if (error) throw error;
       fetchData();
@@ -219,12 +247,33 @@ export default function RoomPage() {
     members.forEach(m => balance[m.id] = 0);
 
     expenses.forEach(exp => {
-      const perPerson = Math.ceil(exp.amount / exp.split_among.length);
-      const adjustedTotal = perPerson * exp.split_among.length;
-      balance[exp.paid_by] += adjustedTotal;
-      exp.split_among.forEach(mId => {
-        balance[mId] -= perPerson;
+      let splitDetails: Record<string, number> = {};
+      
+      if (Array.isArray(exp.split_among)) {
+        // 舊格式：平均分配
+        const count = exp.split_among.length;
+        if (count > 0) {
+          const perPerson = Math.ceil(exp.amount / count);
+          exp.split_among.forEach(id => {
+            splitDetails[id] = perPerson;
+          });
+        }
+      } else {
+        // 新格式：指定金額
+        splitDetails = exp.split_among as Record<string, number>;
+      }
+
+      let totalInSplit = 0;
+      Object.entries(splitDetails).forEach(([id, amt]) => {
+        if (balance[id] !== undefined) {
+          balance[id] -= amt;
+          totalInSplit += amt;
+        }
       });
+      // 以分攤後的總和作為付款人的加項，確保總額平衡
+      if (balance[exp.paid_by] !== undefined) {
+        balance[exp.paid_by] += totalInSplit;
+      }
     });
 
     const individualBalances = members.map(m => ({
@@ -417,33 +466,60 @@ export default function RoomPage() {
                   <div className="space-y-2">
                     <div className="flex justify-between items-center ml-1">
                       <Label className="text-slate-600">分攤成員</Label>
-                      <Button 
-                        type="button" 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={() => setSelectedSplitters(members.map(m => m.id))}
-                        className="text-xs h-6 text-blue-600 hover:bg-blue-50"
-                      >
-                        全選
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button 
+                          type="button" 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => setIsManualSplit(!isManualSplit)}
+                          className={`text-xs h-7 px-2 rounded-lg transition-colors ${isManualSplit ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-slate-400 hover:bg-slate-100'}`}
+                        >
+                          {isManualSplit ? '手動模式' : '平分模式'}
+                        </Button>
+                        <Button 
+                          type="button" 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => setSelectedSplitters(members.map(m => m.id))}
+                          className="text-xs h-7 px-2 text-blue-600 hover:bg-blue-50"
+                        >
+                          全選
+                        </Button>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 p-1 max-h-40 overflow-y-auto">
-                      {members.map(m => (
-                        <div key={m.id} className={`flex items-center space-x-2 p-2 rounded-xl border transition-all ${selectedSplitters.includes(m.id) ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-100 text-slate-500'}`} onClick={() => {
-                          if (selectedSplitters.includes(m.id)) {
-                            setSelectedSplitters(selectedSplitters.filter(id => id !== m.id));
-                          } else {
-                            setSelectedSplitters([...selectedSplitters, m.id]);
-                          }
-                        }}>
-                          <Checkbox 
-                            id={`m-${m.id}`} 
-                            checked={selectedSplitters.includes(m.id)}
-                            className="hidden"
-                          />
-                          <span className="text-sm font-bold truncate">{m.name}</span>
-                        </div>
-                      ))}
+                    <div className="space-y-2 max-h-64 overflow-y-auto p-1 pr-2">
+                      {members.map(m => {
+                        const isSelected = selectedSplitters.includes(m.id);
+                        return (
+                          <div key={m.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${isSelected ? 'bg-blue-50 border-blue-100' : 'bg-white border-slate-100'}`}>
+                            <Checkbox 
+                              id={`m-${m.id}`} 
+                              checked={isSelected}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setSelectedSplitters([...selectedSplitters, m.id]);
+                                } else {
+                                  setSelectedSplitters(selectedSplitters.filter(id => id !== m.id));
+                                }
+                              }}
+                            />
+                            <Label htmlFor={`m-${m.id}`} className="flex-1 font-bold text-slate-700 cursor-pointer truncate">{m.name}</Label>
+                            <div className="flex items-center gap-1">
+                              <span className="text-slate-400 text-xs">$</span>
+                              <Input 
+                                type="number"
+                                value={individualAmounts[m.id] || ''}
+                                onChange={(e) => {
+                                  setIsManualSplit(true);
+                                  setIndividualAmounts(prev => ({ ...prev, [m.id]: e.target.value }));
+                                }}
+                                disabled={!isSelected}
+                                className="w-24 h-9 text-right font-mono text-sm bg-white border-slate-200 rounded-lg focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                   <DialogFooter className="pt-2">
