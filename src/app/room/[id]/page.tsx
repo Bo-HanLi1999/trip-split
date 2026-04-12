@@ -142,9 +142,18 @@ export default function RoomPage() {
 
   const handleDeleteMember = async (memberId: string, memberName: string) => {
     // 檢查該成員是否有相關花費紀錄
-    const hasExpense = expenses.some(exp => 
-      exp.paid_by === memberId || exp.split_among.includes(memberId)
-    );
+    const hasExpense = expenses.some(exp => {
+      const isPayer = exp.paid_by === memberId;
+      let isSplitter = false;
+      
+      if (Array.isArray(exp.split_among)) {
+        isSplitter = exp.split_among.includes(memberId);
+      } else {
+        isSplitter = Object.keys(exp.split_among).includes(memberId);
+      }
+      
+      return isPayer || isSplitter;
+    });
 
     if (hasExpense) {
       alert(`無法刪除 ${memberName}，因為他已有相關的花費紀錄。請先刪除他的紀錄再嘗試。`);
@@ -540,7 +549,10 @@ export default function RoomPage() {
                       {members.find(m => m.id === exp.paid_by)?.name} 付了 ${exp.amount}
                     </p>
                     <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[200px]">
-                      分攤: {exp.split_among.map(id => members.find(m => m.id === id)?.name).join(', ')}
+                      分攤: {Array.isArray(exp.split_among) 
+                        ? exp.split_among.map(id => members.find(m => m.id === id)?.name).join(', ')
+                        : Object.keys(exp.split_among).map(id => members.find(m => m.id === id)?.name).join(', ')
+                      }
                     </p>
                   </div>
                   <div className="flex items-center gap-2 sm:gap-4">
