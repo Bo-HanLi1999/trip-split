@@ -427,7 +427,7 @@ export default function RoomPage() {
                 <h3 className="text-lg font-bold flex items-center">
                   <ArrowRightLeft className="h-5 w-5 mr-2" /> 結算清單
                 </h3>
-                <Select value={displayCurrency} onValueChange={setDisplayCurrency}>
+                <Select value={displayCurrency} onValueChange={(val) => setDisplayCurrency(val || 'TWD')}>
                   <SelectTrigger className="w-24 h-8 bg-blue-500 border-none text-white text-xs font-bold rounded-lg">
                     <SelectValue placeholder="幣別" />
                   </SelectTrigger>
@@ -529,7 +529,7 @@ export default function RoomPage() {
                     </div>
                     <div className="space-y-2">
                       <Label className="text-slate-600 ml-1">幣別</Label>
-                      <Select value={expenseCurrency} onValueChange={setExpenseCurrency}>
+                      <Select value={expenseCurrency} onValueChange={(val) => setExpenseCurrency(val || 'TWD')}>
                         <SelectTrigger className="h-12 bg-slate-50 border-none rounded-xl font-bold">
                           <SelectValue placeholder="幣別" />
                         </SelectTrigger>
