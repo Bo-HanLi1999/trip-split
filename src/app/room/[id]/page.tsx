@@ -21,10 +21,27 @@ interface Expense {
   id: string;
   description: string;
   amount: number;
+  currency: string;
   paid_by: string;
   split_among: string[] | Record<string, number>;
   created_at: string;
 }
+
+const CURRENCIES = [
+  { value: 'TWD', label: 'TWD (台幣)', symbol: '$', decimals: 0 },
+  { value: 'JPY', label: 'JPY (日幣)', symbol: '¥', decimals: 0 },
+  { value: 'USD', label: 'USD (美金)', symbol: '$', decimals: 2 },
+  { value: 'EUR', label: 'EUR (歐元)', symbol: '€', decimals: 2 },
+];
+
+// 以 TWD 為基準的匯率 (1 外幣 = ? TWD)
+// 實際應用可考慮串接即時 API，這裡先使用常數
+const EXCHANGE_RATES: Record<string, number> = {
+  TWD: 1,
+  JPY: 0.21,  // 1 JPY = 0.21 TWD
+  USD: 32.5,  // 1 USD = 32.5 TWD
+  EUR: 35.2,  // 1 EUR = 35.2 TWD
+};
 
 export default function RoomPage() {
   const { id: roomId } = useParams() as { id: string };
@@ -35,6 +52,10 @@ export default function RoomPage() {
   const [joining, setJoining] = useState(false);
   const [newName, setNewName] = useState('');
   
+  // Currency State
+  const [displayCurrency, setDisplayCurrency] = useState('TWD');
+  const [expenseCurrency, setExpenseCurrency] = useState('TWD');
+  
   // New Expense Form State
   const [expenseDesc, setExpenseDesc] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
@@ -44,23 +65,30 @@ export default function RoomPage() {
   const [individualAmounts, setIndividualAmounts] = useState<Record<string, string>>({});
   const [isAddingExpense, setIsAddingExpense] = useState(false);
 
-  // 當總金額、成員選擇或模式改變時，自動更新各成員金額
+  // 當總金額、成員選擇、模式或幣別改變時，自動更新各成員金額
   useEffect(() => {
     if (!isManualSplit && members.length > 0) {
       const total = parseFloat(expenseAmount) || 0;
       const count = selectedSplitters.length;
       if (count > 0) {
-        const perPerson = Math.ceil(total / count);
+        // 根據幣別決定精度
+        const currencyConfig = CURRENCIES.find(c => c.value === expenseCurrency);
+        const decimals = currencyConfig?.decimals ?? 0;
+        const factor = Math.pow(10, decimals);
+        
+        // 使用 Math.ceil 確保總額不低於原價 (如 user 所述：100/3 = 34 或 33.34)
+        const perPerson = Math.ceil((total / count) * factor) / factor;
+        
         const newAmounts: Record<string, string> = {};
         selectedSplitters.forEach(id => {
-          newAmounts[id] = perPerson.toString();
+          newAmounts[id] = perPerson.toFixed(decimals);
         });
         setIndividualAmounts(newAmounts);
       } else {
         setIndividualAmounts({});
       }
     }
-  }, [expenseAmount, selectedSplitters, isManualSplit, members]);
+  }, [expenseAmount, selectedSplitters, isManualSplit, members, expenseCurrency]);
 
   // 當打開新增花費視窗時，自動預設全選所有成員
   useEffect(() => {
@@ -194,12 +222,14 @@ export default function RoomPage() {
           room_id: roomId,
           description: expenseDesc,
           amount: parseFloat(expenseAmount),
+          currency: expenseCurrency,
           paid_by: payerId,
           split_among: splitDetails
         }]);
       if (error) throw error;
       setExpenseDesc('');
       setExpenseAmount('');
+      setExpenseCurrency('TWD');
       setPayerId('');
       setSelectedSplitters([]);
       setIndividualAmounts({});
@@ -235,6 +265,7 @@ export default function RoomPage() {
           room_id: roomId,
           description: `[轉帳] ${fromName} 給 ${toName}`,
           amount: amount,
+          currency: displayCurrency,
           paid_by: fromId,
           split_among: { [toId]: amount }
         }]);
@@ -255,14 +286,17 @@ export default function RoomPage() {
     const balance: Record<string, number> = {};
     members.forEach(m => balance[m.id] = 0);
 
-    expenses.forEach(exp => {
+    // 僅過濾出與目前「顯示幣別」相同的花費
+    const filteredExpenses = expenses.filter(exp => (exp.currency || 'TWD') === displayCurrency);
+
+    filteredExpenses.forEach(exp => {
       let splitDetails: Record<string, number> = {};
       
       if (Array.isArray(exp.split_among)) {
         // 舊格式：平均分配
         const count = exp.split_among.length;
         if (count > 0) {
-          const perPerson = Math.ceil(exp.amount / count);
+          const perPerson = exp.amount / count;
           exp.split_among.forEach(id => {
             splitDetails[id] = perPerson;
           });
@@ -272,30 +306,37 @@ export default function RoomPage() {
         splitDetails = exp.split_among as Record<string, number>;
       }
 
-      let totalInSplit = 0;
+      let actualTotal = 0;
       Object.entries(splitDetails).forEach(([id, amt]) => {
         if (balance[id] !== undefined) {
           balance[id] -= amt;
-          totalInSplit += amt;
+          actualTotal += amt;
         }
       });
-      // 以分攤後的總和作為付款人的加項，確保總額平衡
+      // 付款人增加對應金額
       if (balance[exp.paid_by] !== undefined) {
-        balance[exp.paid_by] += totalInSplit;
+        balance[exp.paid_by] += actualTotal;
       }
     });
 
-    const individualBalances = members.map(m => ({
-      id: m.id,
-      name: m.name,
-      net: balance[m.id] || 0
-    }));
+    const individualBalances = members.map(m => {
+      return {
+        id: m.id,
+        name: m.name,
+        net: balance[m.id] || 0
+      };
+    });
+
+    // 計算轉帳路徑 (僅針對當前幣別)
+    const currencyConfig = CURRENCIES.find(c => c.value === displayCurrency);
+    const decimals = currencyConfig?.decimals ?? 0;
+    const factor = Math.pow(10, decimals);
 
     const creditors = Object.entries(balance)
-      .filter(([_, val]) => val > 0.5)
+      .filter(([_, val]) => val > (1 / factor) * 0.5) // 根據幣別精度調整閾值
       .sort((a, b) => b[1] - a[1]);
     const debtors = Object.entries(balance)
-      .filter(([_, val]) => val < -0.5)
+      .filter(([_, val]) => val < -(1 / factor) * 0.5)
       .sort((a, b) => a[1] - b[1]);
 
     const transfers: { fromId: string, toId: string, from: string, to: string, amount: number }[] = [];
@@ -305,23 +346,24 @@ export default function RoomPage() {
     let d = 0, c = 0;
     while (d < debtorsCopy.length && c < creditorsCopy.length) {
       const amount = Math.min(Math.abs(debtorsCopy[d][1]), creditorsCopy[c][1]);
+      
       transfers.push({
         fromId: debtorsCopy[d][0],
         toId: creditorsCopy[c][0],
         from: members.find(m => m.id === debtorsCopy[d][0])?.name || '未知',
         to: members.find(m => m.id === creditorsCopy[c][0])?.name || '未知',
-        amount: Math.round(amount)
+        amount: Math.round(amount * factor) / factor
       });
 
       debtorsCopy[d][1] += amount;
       creditorsCopy[c][1] -= amount;
 
-      if (Math.abs(debtorsCopy[d][1]) < 0.5) d++;
-      if (Math.abs(creditorsCopy[c][1]) < 0.5) c++;
+      if (Math.abs(debtorsCopy[d][1]) < (1 / factor) * 0.5) d++;
+      if (Math.abs(creditorsCopy[c][1]) < (1 / factor) * 0.5) c++;
     }
 
     return { individualBalances, transfers };
-  }, [members, expenses]);
+  }, [members, expenses, displayCurrency]);
 
   if (loading) {
     return (
@@ -381,55 +423,80 @@ export default function RoomPage() {
         {individualBalances.length > 0 && (expenses.length > 0) && (
           <Card className="border-blue-100 shadow-md overflow-hidden bg-white">
             <div className="bg-blue-600 p-5 text-white">
-              <h3 className="text-lg font-bold flex items-center mb-1">
-                <ArrowRightLeft className="h-5 w-5 mr-2" /> 結算清單
-              </h3>
+              <div className="flex justify-between items-start mb-2">
+                <h3 className="text-lg font-bold flex items-center">
+                  <ArrowRightLeft className="h-5 w-5 mr-2" /> 結算清單
+                </h3>
+                <Select value={displayCurrency} onValueChange={setDisplayCurrency}>
+                  <SelectTrigger className="w-24 h-8 bg-blue-500 border-none text-white text-xs font-bold rounded-lg">
+                    <SelectValue placeholder="幣別" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CURRENCIES.map(c => (
+                      <SelectItem key={c.value} value={c.value}>{c.value}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <p className="text-blue-100 text-xs opacity-90">
-                系統已自動取整數，付錢的人可能會少收/多付幾塊錢
+                依據設定匯率換算為 {displayCurrency}
               </p>
             </div>
             <CardContent className="p-0">
               <div className="divide-y divide-slate-50">
-                {individualBalances.map((b, idx) => (
-                  <div key={idx} className="flex items-center justify-between px-4 py-3.5">
-                    <span className="font-bold text-slate-700">{b.name}</span>
-                    {b.net > 0 ? (
-                      <span className="text-emerald-600 font-extrabold text-base">應收 ${b.net}</span>
-                    ) : b.net < 0 ? (
-                      <span className="text-rose-500 font-extrabold text-base">應付 ${Math.abs(b.net)}</span>
-                    ) : (
-                      <span className="text-slate-400 font-medium">已結清</span>
-                    )}
-                  </div>
-                ))}
+                {individualBalances.map((b, idx) => {
+                  const config = CURRENCIES.find(c => c.value === displayCurrency);
+                  const symbol = config?.symbol || '$';
+                  const decimals = config?.decimals ?? 0;
+                  const factor = Math.pow(10, decimals);
+                  
+                  return (
+                    <div key={idx} className="flex items-center justify-between px-4 py-3.5">
+                      <span className="font-bold text-slate-700">{b.name}</span>
+                      {b.net > (1 / factor) * 0.5 ? (
+                        <span className="text-emerald-600 font-extrabold text-base">應收 {symbol}{b.net.toFixed(decimals)}</span>
+                      ) : b.net < -(1 / factor) * 0.5 ? (
+                        <span className="text-rose-500 font-extrabold text-base">應付 {symbol}{Math.abs(b.net).toFixed(decimals)}</span>
+                      ) : (
+                        <span className="text-slate-400 font-medium">已結清</span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {transfers.length > 0 && (
                 <div className="bg-slate-50 p-4 border-t border-slate-100">
-                  <h4 className="text-xs font-black text-slate-400 mb-4 uppercase tracking-widest">建議轉帳順序</h4>
+                  <h4 className="text-xs font-black text-slate-400 mb-4 uppercase tracking-widest">建議轉帳順序 ({displayCurrency})</h4>
                   <div className="space-y-3">
-                    {transfers.map((s, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <div className="flex-1 flex items-center justify-between bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-sm">
-                          <span className="font-bold text-slate-800">{s.from}</span>
-                          <div className="flex flex-col items-center flex-1 px-4">
-                            <span className="text-[11px] font-black text-blue-600 mb-1 tracking-tighter">${s.amount}</span>
-                            <div className="w-full h-0.5 bg-blue-100 relative rounded-full">
-                              <div className="absolute right-0 -top-0.5 border-t-2 border-l-2 border-transparent border-l-blue-400"></div>
+                    {transfers.map((s, idx) => {
+                      const config = CURRENCIES.find(c => c.value === displayCurrency);
+                      const symbol = config?.symbol || '$';
+                      const decimals = config?.decimals ?? 0;
+
+                      return (
+                        <div key={idx} className="flex items-center gap-2">
+                          <div className="flex-1 flex items-center justify-between bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-sm">
+                            <span className="font-bold text-slate-800">{s.from}</span>
+                            <div className="flex flex-col items-center flex-1 px-4">
+                              <span className="text-[11px] font-black text-blue-600 mb-1 tracking-tighter">{symbol}{s.amount.toFixed(decimals)}</span>
+                              <div className="w-full h-0.5 bg-blue-100 relative rounded-full">
+                                <div className="absolute right-0 -top-0.5 border-t-2 border-l-2 border-transparent border-l-blue-400"></div>
+                              </div>
                             </div>
+                            <span className="font-bold text-slate-800">{s.to}</span>
                           </div>
-                          <span className="font-bold text-slate-800">{s.to}</span>
+                          <Button 
+                            size="icon-sm" 
+                            variant="outline" 
+                            className="rounded-xl h-12 w-12 flex-shrink-0 bg-white hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-all border-slate-200"
+                            onClick={() => handleQuickSettle(s.fromId, s.toId, s.from, s.to, s.amount)}
+                          >
+                            <Check className="h-5 w-5" />
+                          </Button>
                         </div>
-                        <Button 
-                          size="icon-sm" 
-                          variant="outline" 
-                          className="rounded-xl h-12 w-12 flex-shrink-0 bg-white hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition-all border-slate-200"
-                          onClick={() => handleQuickSettle(s.fromId, s.toId, s.from, s.to, s.amount)}
-                        >
-                          <Check className="h-5 w-5" />
-                        </Button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -455,9 +522,24 @@ export default function RoomPage() {
                     <Label className="text-slate-600 ml-1">花費說明</Label>
                     <Input placeholder="例如：晚餐、租車..." value={expenseDesc} onChange={e => setExpenseDesc(e.target.value)} className="h-12 bg-slate-50 border-none rounded-xl" />
                   </div>
-                  <div className="space-y-2">
-                    <Label className="text-slate-600 ml-1">金額 ($)</Label>
-                    <Input type="number" placeholder="0" value={expenseAmount} onChange={e => setExpenseAmount(e.target.value)} className="h-12 bg-slate-50 border-none rounded-xl text-lg font-bold" />
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2 space-y-2">
+                      <Label className="text-slate-600 ml-1">金額</Label>
+                      <Input type="number" placeholder="0" value={expenseAmount} onChange={e => setExpenseAmount(e.target.value)} className="h-12 bg-slate-50 border-none rounded-xl text-lg font-bold" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-slate-600 ml-1">幣別</Label>
+                      <Select value={expenseCurrency} onValueChange={setExpenseCurrency}>
+                        <SelectTrigger className="h-12 bg-slate-50 border-none rounded-xl font-bold">
+                          <SelectValue placeholder="幣別" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CURRENCIES.map(c => (
+                            <SelectItem key={c.value} value={c.value}>{c.value}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label className="text-slate-600 ml-1">誰付的錢？</Label>
@@ -542,35 +624,39 @@ export default function RoomPage() {
           </div>
 
           <div className="space-y-3">
-            {expenses.map(exp => (
-              <Card key={exp.id} className="border-none shadow-sm overflow-hidden group">
-                <CardContent className="p-4 flex justify-between items-center">
-                  <div className="flex-1">
-                    <h3 className="font-bold text-slate-800">{exp.description}</h3>
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      {members.find(m => m.id === exp.paid_by)?.name} 付了 ${exp.amount}
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[200px]">
-                      分攤: {Array.isArray(exp.split_among) 
-                        ? exp.split_among.map(id => members.find(m => m.id === id)?.name).join(', ')
-                        : Object.keys(exp.split_among).map(id => members.find(m => m.id === id)?.name).join(', ')
-                      }
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 sm:gap-4">
-                    <div className="text-lg font-black text-slate-900">${exp.amount}</div>
-                    <Button 
-                      variant="ghost" 
-                      size="icon-sm" 
-                      className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-all rounded-full h-9 w-9"
-                      onClick={() => handleDeleteExpense(exp.id)}
-                    >
-                      <Trash2 className="h-5 w-5" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+            {expenses.map(exp => {
+              const symbol = CURRENCIES.find(c => c.value === exp.currency)?.symbol || '$';
+              return (
+                <Card key={exp.id} className="border-none shadow-sm overflow-hidden group">
+                  <CardContent className="p-4 flex justify-between items-center">
+                    <div className="flex-1">
+                      <h3 className="font-bold text-slate-800">{exp.description}</h3>
+                      <p className="text-[11px] text-slate-500 font-medium">
+                        {members.find(m => m.id === exp.paid_by)?.name} 付了 {symbol}{exp.amount}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[200px]">
+                        分攤: {Array.isArray(exp.split_among) 
+                          ? exp.split_among.map(id => members.find(m => m.id === id)?.name).join(', ')
+                          : Object.keys(exp.split_among).map(id => members.find(m => m.id === id)?.name).join(', ')
+                        }
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 sm:gap-4">
+                      <div className="text-lg font-black text-slate-900">{symbol}{exp.amount}</div>
+                      <div className="text-[10px] font-bold text-slate-300 group-hover:text-slate-400">{exp.currency}</div>
+                      <Button 
+                        variant="ghost" 
+                        size="icon-sm" 
+                        className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-all rounded-full h-9 w-9"
+                        onClick={() => handleDeleteExpense(exp.id)}
+                      >
+                        <Trash2 className="h-5 w-5" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
             {expenses.length === 0 && (
               <div className="text-center py-16 bg-white rounded-3xl border-2 border-dashed border-slate-100">
                 <Receipt className="h-12 w-12 text-slate-100 mx-auto mb-3" />

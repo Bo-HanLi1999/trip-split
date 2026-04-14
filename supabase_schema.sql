@@ -19,6 +19,7 @@ CREATE TABLE expenses (
   room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   description TEXT NOT NULL,
   amount DECIMAL(12,2) NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'TWD',
   paid_by UUID NOT NULL REFERENCES members(id),
   split_among JSONB NOT NULL, -- Array of member UUIDs
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
