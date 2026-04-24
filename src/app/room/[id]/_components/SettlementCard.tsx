@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArrowRightLeft, Check } from 'lucide-react';
 import { CURRENCIES } from '@/lib/currencies';
+import { computeSplitShares } from '@/lib/splits';
 import type { Member, Expense } from '@/lib/types';
 
 interface Props {
@@ -26,17 +27,7 @@ export function SettlementCard({ members, expenses, roomId, onDataChange }: Prop
     const filteredExpenses = expenses.filter(exp => (exp.currency || 'TWD') === displayCurrency);
 
     filteredExpenses.forEach(exp => {
-      let splitDetails: Record<string, number> = {};
-
-      if (Array.isArray(exp.split_among)) {
-        const count = exp.split_among.length;
-        if (count > 0) {
-          const perPerson = exp.amount / count;
-          exp.split_among.forEach(id => { splitDetails[id] = perPerson; });
-        }
-      } else {
-        splitDetails = exp.split_among as Record<string, number>;
-      }
+      const splitDetails = computeSplitShares(exp);
 
       let actualTotal = 0;
       Object.entries(splitDetails).forEach(([id, amt]) => {
