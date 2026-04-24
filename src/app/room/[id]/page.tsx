@@ -92,11 +92,12 @@ export default function RoomPage() {
 
   // 當打開新增花費視窗時，自動預設全選所有成員
   useEffect(() => {
-    if (isAddingExpense && members.length > 0) {
+    if (isAddingExpense) {
       setSelectedSplitters(members.map(m => m.id));
       setIsManualSplit(false);
     }
-  }, [isAddingExpense, members]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAddingExpense]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -134,12 +135,12 @@ export default function RoomPage() {
     fetchData();
 
     const membersChannel = supabase
-      .channel('members-changes')
+      .channel(`members-changes-${roomId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'members', filter: `room_id=eq.${roomId}` }, () => fetchData())
       .subscribe();
 
     const expensesChannel = supabase
-      .channel('expenses-changes')
+      .channel(`expenses-changes-${roomId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `room_id=eq.${roomId}` }, () => fetchData())
       .subscribe();
 
@@ -644,24 +645,27 @@ export default function RoomPage() {
 
           <div className="space-y-3">
             {expenses.map(exp => {
-              const symbol = CURRENCIES.find(c => c.value === exp.currency)?.symbol || '$';
+              const currencyConfig = CURRENCIES.find(c => c.value === exp.currency);
+              const symbol = currencyConfig?.symbol || '$';
+              const decimals = currencyConfig?.decimals ?? 0;
+              const formattedAmount = exp.amount.toFixed(decimals);
               return (
                 <Card key={exp.id} className="border-none shadow-sm overflow-hidden group">
                   <CardContent className="p-4 flex justify-between items-center">
                     <div className="flex-1">
                       <h3 className="font-bold text-slate-800">{exp.description}</h3>
                       <p className="text-[11px] text-slate-500 font-medium">
-                        {members.find(m => m.id === exp.paid_by)?.name} 付了 {symbol}{exp.amount}
+                        {members.find(m => m.id === exp.paid_by)?.name} 付了 {symbol}{formattedAmount}
                       </p>
                       <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[200px]">
-                        分攤: {Array.isArray(exp.split_among) 
+                        分攤: {Array.isArray(exp.split_among)
                           ? exp.split_among.map(id => members.find(m => m.id === id)?.name).join(', ')
                           : Object.keys(exp.split_among).map(id => members.find(m => m.id === id)?.name).join(', ')
                         }
                       </p>
                     </div>
                     <div className="flex items-center gap-2 sm:gap-4">
-                      <div className="text-lg font-black text-slate-900">{symbol}{exp.amount}</div>
+                      <div className="text-lg font-black text-slate-900">{symbol}{formattedAmount}</div>
                       <div className="text-[10px] font-bold text-slate-300 group-hover:text-slate-400">{exp.currency}</div>
                       <Button 
                         variant="ghost" 
