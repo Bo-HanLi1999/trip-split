@@ -213,17 +213,20 @@ export default function RoomPage() {
     const currencyConfig = CURRENCIES.find(c => c.value === expenseCurrency);
     const decimals = currencyConfig?.decimals ?? 0;
     const factor = Math.pow(10, decimals);
-    const totalAmount = Math.round(parseFloat(expenseAmount) * factor);
     const splitDetails: Record<string, number> = {};
     selectedSplitters.forEach(id => {
       splitDetails[id] = parseFloat(individualAmounts[id]) || 0;
     });
-    const splitSum = Math.round(Object.values(splitDetails).reduce((acc, v) => acc + v, 0) * factor);
-    if (splitSum !== totalAmount) {
-      const diff = (totalAmount - splitSum) / factor;
-      const sign = diff > 0 ? '+' : '';
-      alert(`分攤金額加總（${splitSum / factor}）與花費金額（${totalAmount / factor}）不符，差額 ${sign}${diff.toFixed(decimals)}，請調整後再送出。`);
-      return;
+
+    if (isManualSplit) {
+      const totalAmount = Math.round(parseFloat(expenseAmount) * factor);
+      const splitSum = Math.round(Object.values(splitDetails).reduce((acc, v) => acc + v, 0) * factor);
+      if (splitSum !== totalAmount) {
+        const diff = (totalAmount - splitSum) / factor;
+        const sign = diff > 0 ? '+' : '';
+        alert(`分攤金額加總（${splitSum / factor}）與花費金額（${totalAmount / factor}）不符，差額 ${sign}${diff.toFixed(decimals)}，請調整後再送出。`);
+        return;
+      }
     }
 
     try {
