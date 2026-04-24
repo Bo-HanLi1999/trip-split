@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -34,14 +34,6 @@ const CURRENCIES = [
   { value: 'EUR', label: 'EUR (歐元)', symbol: '€', decimals: 2 },
 ];
 
-// 以 TWD 為基準的匯率 (1 外幣 = ? TWD)
-// 實際應用可考慮串接即時 API，這裡先使用常數
-const EXCHANGE_RATES: Record<string, number> = {
-  TWD: 1,
-  JPY: 0.21,  // 1 JPY = 0.21 TWD
-  USD: 32.5,  // 1 USD = 32.5 TWD
-  EUR: 35.2,  // 1 EUR = 35.2 TWD
-};
 
 export default function RoomPage() {
   const { id: roomId } = useParams() as { id: string };
@@ -459,19 +451,19 @@ export default function RoomPage() {
                 </Select>
               </div>
               <p className="text-blue-100 text-xs opacity-90">
-                依據設定匯率換算為 {displayCurrency}
+                僅顯示 {displayCurrency} 的花費
               </p>
             </div>
             <CardContent className="p-0">
               <div className="divide-y divide-slate-50">
-                {individualBalances.map((b, idx) => {
+                {individualBalances.map((b) => {
                   const config = CURRENCIES.find(c => c.value === displayCurrency);
                   const symbol = config?.symbol || '$';
                   const decimals = config?.decimals ?? 0;
                   const factor = Math.pow(10, decimals);
-                  
+
                   return (
-                    <div key={idx} className="flex items-center justify-between px-4 py-3.5">
+                    <div key={b.id} className="flex items-center justify-between px-4 py-3.5">
                       <span className="font-bold text-slate-700">{b.name}</span>
                       {b.net > (1 / factor) * 0.5 ? (
                         <span className="text-emerald-600 font-extrabold text-base">應收 {symbol}{b.net.toFixed(decimals)}</span>
