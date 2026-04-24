@@ -292,9 +292,13 @@ export default function RoomPage() {
     }
   };
 
-  const copyUrl = () => {
-    navigator.clipboard.writeText(window.location.href);
-    alert('已複製網址，分享給朋友吧！');
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      alert('已複製網址，分享給朋友吧！');
+    } catch {
+      alert('複製失敗，請手動複製網址列的連結。');
+    }
   };
 
   const { individualBalances, transfers } = useMemo(() => {
@@ -613,7 +617,7 @@ export default function RoomPage() {
                             />
                             <Label htmlFor={`m-${m.id}`} className="flex-1 font-bold text-slate-700 cursor-pointer truncate">{m.name}</Label>
                             <div className="flex items-center gap-1">
-                              <span className="text-slate-400 text-xs">$</span>
+                              <span className="text-slate-400 text-xs">{CURRENCIES.find(c => c.value === expenseCurrency)?.symbol ?? '$'}</span>
                               <Input 
                                 type="number"
                                 value={individualAmounts[m.id] || ''}
